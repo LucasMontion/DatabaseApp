@@ -81,6 +81,7 @@ if 'current_query_result' not in st.session_state:
 # Database selection with dropdown
 st.subheader("1. Select or Create Database")
 db_list = get_databases()
+
 # Create search box
 search_term = st.text_input("Search databases:")
 
