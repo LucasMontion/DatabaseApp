@@ -195,13 +195,13 @@ if selected_db:
                 table_columns = []
                 for col in columns:
                     table_columns.append(col[1])
-                column_to_change = st.selectbox("Select column to modify:", table_columns)
+                column_to_change = st.selectbox("Select column to modify:", table_columns, key=f"modify_column_select_{table}")
                 data_types = {"BOOLEAN":"BOOLEAN", "NUMBER":"FLOAT(30,4)", "TEXT":"TEXT(10000)"}
 
-                selected_type = st.selectbox("Select new data type:", list(data_types.keys()))
+                selected_type = st.selectbox("Select new data type:", list(data_types.keys()), key=f"data_type_select_{table}")
 
                 # Apply conversion if button is clicked
-                if st.button("Convert Column"):
+                if st.button("Convert Column", key=f"convert_{table}"):
                     try:
                         modify_column_type(selected_db,table,column_to_change,selected_type)
                         st.success(f"Column '{column_to_change}' converted to {selected_type}!")
