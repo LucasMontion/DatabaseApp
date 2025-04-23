@@ -30,6 +30,47 @@ def get_tables(db_path):
 def get_connection(db_path):
     return sqlite3.connect(db_path)
 
+def modify_column_type(db_name, table_name, column_name, new_type):
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+
+    # Get the existing schema
+    print("get schema")
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    columns = cursor.fetchall()
+
+    # Build new table schema dynamically
+    print("building new table")
+    new_table_name = f"{table_name}_new"
+    column_defs = []
+    for col in columns:
+        col_name, col_type = col[1], col[2]
+        col_type = new_type if col_name == column_name else col_type
+        column_defs.append(f"{col_name} {col_type}")
+
+    column_defs_str = ", ".join(column_defs)
+    cursor.execute(f"CREATE TABLE {new_table_name} ({column_defs_str})")
+
+    # Copy data over, casting column if needed
+    print("copying")
+    column_names = ", ".join([col[1] for col in columns])
+    cast_exprs = ", ".join([f"CAST({col_name} AS {new_type})" if col_name == column_name else col_name for col_name in column_names.split(", ")])
+    
+    print("insert")
+    cursor.execute(f"INSERT INTO {new_table_name} ({column_names}) SELECT {cast_exprs} FROM {table_name}")
+
+    # Drop the old table
+    cursor.execute(f"DROP TABLE {table_name}")
+
+    # Rename the new table
+    cursor.execute(f"ALTER TABLE {new_table_name} RENAME TO {table_name}")
+
+    conn.commit()
+    conn.close()
+
+# Example usage
+#modify_column_type("your_database.db", "your_table", "age", "INTEGER")
+
 # App title and styling
 st.title("CSV Database Manager")
 st.write("Upload CSV files, manage your database, and run queries easily")
@@ -55,7 +96,9 @@ if selected_db:
     # CSV Import Section
     st.subheader("2. Import CSV Data")
     
-    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+
+    uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=["csv","xlsx"])
+        
     
     # Table selection/creation
     tables = get_tables(selected_db)
@@ -79,9 +122,23 @@ if selected_db:
         if_exists = "replace"  # For new tables
     
     if uploaded_file and selected_table and st.button("Import CSV to Database"):
-        # Read CSV
-        df = pd.read_csv(uploaded_file)
-        
+        #EXCEL  =  application/vnd.openxmlformats-officedocument.spreadsheetml.sheet 
+        #CSV  =  text/csv 
+        #print(uploaded_file)
+
+        if(uploaded_file.type == "text/csv"):
+            # Read CSV
+            df = pd.read_csv(uploaded_file)
+        elif (uploaded_file.type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"):
+            read_file = pd.read_excel(uploaded_file)
+
+            read_file.to_csv(uploaded_file.name+".csv",  
+                  index=False, 
+                  header=True,
+                  sep=",")
+            # read csv file
+            df = pd.read_csv(uploaded_file.name+".csv")
+
         # Display preview
         st.write("Preview of imported data:")
         st.dataframe(df.head())
@@ -98,11 +155,22 @@ if selected_db:
     
     # Database Info Section
     st.subheader("3. Database Information")
-    
+
+    if "confirm_delete" not in st.session_state:
+        st.session_state.confirm_delete = False
+
     if st.button("Refresh Database Info"):
         tables = get_tables(selected_db)
-        
+
     if tables:
+        # Initialize session state for each dynamically generated widget
+        for widget in tables:
+            widget = widget.strip()  # Clean up whitespace
+            if widget:
+                confirm_key = f"confirm_{widget}"  # Unique session key
+                if confirm_key not in st.session_state:
+                    st.session_state[confirm_key] = False
+
         st.write(f"Tables in database ({len(tables)}):")
         for table in tables:
             expander = st.expander(f"Table: {table}")
@@ -123,10 +191,49 @@ if selected_db:
                 col_df = pd.read_sql_query(f"PRAGMA table_info({table});", conn)
                 st.dataframe(col_df[['name', 'type']])
                 
+                # Modify column data type
+                table_columns = []
+                for col in columns:
+                    table_columns.append(col[1])
+                column_to_change = st.selectbox("Select column to modify:", table_columns)
+                data_types = {"BOOLEAN":"BOOLEAN", "NUMBER":"FLOAT(30,4)", "TEXT":"TEXT(10000)"}
+
+                selected_type = st.selectbox("Select new data type:", list(data_types.keys()))
+
+                # Apply conversion if button is clicked
+                if st.button("Convert Column"):
+                    try:
+                        modify_column_type(selected_db,table,column_to_change,selected_type)
+                        st.success(f"Column '{column_to_change}' converted to {selected_type}!")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
                 # Show sample data
                 sample = pd.read_sql_query(f"SELECT * FROM {table} LIMIT 5", conn)
                 st.write("Sample data:")
                 st.dataframe(sample)
+                
+                # Delete button to drop a table
+                if st.button(f"Delete {table}", key=f"delete_{table}"):
+                    st.session_state[f"confirm_{table}"] = True  # Trigger confirmation
+
+                # Show confirmation prompt if delete was clicked
+                if st.session_state[f"confirm_{table}"]:
+                    st.warning(f"Are you sure you want to delete {table}?")
+                    col1, col2 = st.columns(2)
+
+                    # Confirm deletion
+                    with col1:
+                        if st.button(f"Yes, Delete {table}", key=f"yes_{table}"):
+                            cursor.execute(f"DROP TABLE {table};")
+                            st.success(f"{table} deleted!")
+                            st.session_state[f"confirm_{table}"] = False  # Reset state
+
+                    # Cancel deletion
+                    with col2:
+                        if st.button(f"Cancel {table}", key=f"cancel_{table}_2"):
+                            st.session_state[f"confirm_{table}"] = False  # Reset state
+                            st.info(f"Deletion canceled for {table}.")
                 
                 conn.close()
     else:
@@ -196,7 +303,7 @@ if selected_db:
         
         # Allow user to control how many rows to display
         display_rows = st.slider("Number of rows to display:", 
-                                min_value=1, 
+                                min_value=0, 
                                 max_value=min(num_rows, 500),  # Cap at 500 for performance
                                 value=min(num_rows, 50))  # Default to 50 rows
         
