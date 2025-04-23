@@ -1,9 +1,11 @@
 import streamlit as st
+import streamlit_nested_layout
 import pandas as pd
 import sqlite3
 import os
 import glob
 from datetime import datetime
+
 
 # Set page configuration
 st.set_page_config(page_title="CSV Database Manager", layout="wide")
@@ -68,9 +70,6 @@ def modify_column_type(db_name, table_name, column_name, new_type):
     conn.commit()
     conn.close()
 
-# Example usage
-#modify_column_type("your_database.db", "your_table", "age", "INTEGER")
-
 # App title and styling
 st.title("CSV Database Manager")
 st.write("Upload CSV files, manage your database, and run queries easily")
@@ -82,13 +81,21 @@ if 'current_query_result' not in st.session_state:
 # Database selection with dropdown
 st.subheader("1. Select or Create Database")
 db_list = get_databases()
-selected_db = st.selectbox("Choose a database:", db_list)
+# Create search box
+search_term = st.text_input("Search databases:")
 
-# Handle new database creation
-if selected_db == "Create new database...":
-    new_db_name = st.text_input("Enter new database name (without .db extension):")
-    if new_db_name:
-        selected_db = f"{new_db_name}.db"
+# Filter options based on search
+if search_term:
+    filtered_options = [option for option in db_list 
+                      if search_term.lower() in option.lower()]
+else:
+    filtered_options = db_list
+# Show filtered dropdown
+if filtered_options:
+    selected_db = st.selectbox("Select Databases:", filtered_options)
+else:
+    st.warning("No matches found")
+    selected_db = st.selectbox("Select Databases:", db_list)
 
 if selected_db:
     st.success(f"Using database: {selected_db}")
@@ -96,10 +103,8 @@ if selected_db:
     # CSV Import Section
     st.subheader("2. Import CSV Data")
     
-
     uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=["csv","xlsx"])
         
-    
     # Table selection/creation
     tables = get_tables(selected_db)
     table_options = ["Create new table..."] + tables
@@ -171,71 +176,72 @@ if selected_db:
                 if confirm_key not in st.session_state:
                     st.session_state[confirm_key] = False
 
-        st.write(f"Tables in database ({len(tables)}):")
-        for table in tables:
-            expander = st.expander(f"Table: {table}")
-            with expander:
-                conn = get_connection(selected_db)
-                # Get column info
-                cursor = conn.cursor()
-                cursor.execute(f"PRAGMA table_info({table});")
-                columns = cursor.fetchall()
-                
-                # Get row count
-                cursor.execute(f"SELECT COUNT(*) FROM {table};")
-                row_count = cursor.fetchone()[0]
-                
-                # Display table info
-                st.write(f"Rows: {row_count}")
-                st.write("Columns:")
-                col_df = pd.read_sql_query(f"PRAGMA table_info({table});", conn)
-                st.dataframe(col_df[['name', 'type']])
-                
-                # Modify column data type
-                table_columns = []
-                for col in columns:
-                    table_columns.append(col[1])
-                column_to_change = st.selectbox("Select column to modify:", table_columns, key=f"modify_column_select_{table}")
-                data_types = {"BOOLEAN":"BOOLEAN", "NUMBER":"FLOAT(30,4)", "TEXT":"TEXT(10000)"}
+        tables_expander = st.expander(f"Tables in database ({len(tables)}):")
+        with tables_expander:
+            for table in tables:
+                expander = st.expander(f"Table: {table}")
+                with expander:
+                    conn = get_connection(selected_db)
+                    # Get column info
+                    cursor = conn.cursor()
+                    cursor.execute(f"PRAGMA table_info({table});")
+                    columns = cursor.fetchall()
+                    
+                    # Get row count
+                    cursor.execute(f"SELECT COUNT(*) FROM {table};")
+                    row_count = cursor.fetchone()[0]
+                    
+                    # Display table info
+                    st.write(f"Rows: {row_count}")
+                    st.write("Columns:")
+                    col_df = pd.read_sql_query(f"PRAGMA table_info({table});", conn)
+                    st.dataframe(col_df[['name', 'type']])
+                    
+                    # Modify column data type
+                    table_columns = []
+                    for col in columns:
+                        table_columns.append(col[1])
+                    column_to_change = st.selectbox("Select column to modify:", table_columns, key=f"modify_column_select_{table}")
+                    data_types = {"BOOLEAN":"BOOLEAN", "NUMBER":"FLOAT(30,4)", "TEXT":"TEXT(10000)"}
 
-                selected_type = st.selectbox("Select new data type:", list(data_types.keys()), key=f"data_type_select_{table}")
+                    selected_type = st.selectbox("Select new data type:", list(data_types.keys()), key=f"data_type_select_{table}")
 
-                # Apply conversion if button is clicked
-                if st.button("Convert Column", key=f"convert_{table}"):
-                    try:
-                        modify_column_type(selected_db,table,column_to_change,selected_type)
-                        st.success(f"Column '{column_to_change}' converted to {selected_type}!")
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                    # Apply conversion if button is clicked
+                    if st.button("Convert Column", key=f"convert_{table}"):
+                        try:
+                            modify_column_type(selected_db,table,column_to_change,selected_type)
+                            st.success(f"Column '{column_to_change}' converted to {selected_type}!")
+                        except Exception as e:
+                            st.error(f"Error: {e}")
 
-                # Show sample data
-                sample = pd.read_sql_query(f"SELECT * FROM {table} LIMIT 5", conn)
-                st.write("Sample data:")
-                st.dataframe(sample)
-                
-                # Delete button to drop a table
-                if st.button(f"Delete {table}", key=f"delete_{table}"):
-                    st.session_state[f"confirm_{table}"] = True  # Trigger confirmation
+                    # Show sample data
+                    sample = pd.read_sql_query(f"SELECT * FROM {table} LIMIT 5", conn)
+                    st.write("Sample data:")
+                    st.dataframe(sample)
+                    
+                    # Delete button to drop a table
+                    if st.button(f"Delete {table}", key=f"delete_{table}"):
+                        st.session_state[f"confirm_{table}"] = True  # Trigger confirmation
 
-                # Show confirmation prompt if delete was clicked
-                if st.session_state[f"confirm_{table}"]:
-                    st.warning(f"Are you sure you want to delete {table}?")
-                    col1, col2 = st.columns(2)
+                    # Show confirmation prompt if delete was clicked
+                    if st.session_state[f"confirm_{table}"]:
+                        st.warning(f"Are you sure you want to delete {table}?")
+                        col1, col2 = st.columns(2)
 
-                    # Confirm deletion
-                    with col1:
-                        if st.button(f"Yes, Delete {table}", key=f"yes_{table}"):
-                            cursor.execute(f"DROP TABLE {table};")
-                            st.success(f"{table} deleted!")
-                            st.session_state[f"confirm_{table}"] = False  # Reset state
+                        # Confirm deletion
+                        with col1:
+                            if st.button(f"Yes, Delete {table}", key=f"yes_{table}"):
+                                cursor.execute(f"DROP TABLE {table};")
+                                st.success(f"{table} deleted!")
+                                st.session_state[f"confirm_{table}"] = False  # Reset state
 
-                    # Cancel deletion
-                    with col2:
-                        if st.button(f"Cancel {table}", key=f"cancel_{table}_2"):
-                            st.session_state[f"confirm_{table}"] = False  # Reset state
-                            st.info(f"Deletion canceled for {table}.")
-                
-                conn.close()
+                        # Cancel deletion
+                        with col2:
+                            if st.button(f"Cancel {table}", key=f"cancel_{table}_2"):
+                                st.session_state[f"confirm_{table}"] = False  # Reset state
+                                st.info(f"Deletion canceled for {table}.")
+                    
+                    conn.close()
     else:
         st.info("No tables found in the selected database.")
     
