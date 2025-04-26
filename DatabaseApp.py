@@ -83,21 +83,14 @@ st.subheader("1. Select or Create Database")
 db_list = get_databases()
 
 # Create search box
-search_term = st.text_input("Search databases:")
+selected_db = st.selectbox("Choose a Database:", db_list)
+# Handle new database creation
+if selected_db == "Create new database...":
+    new_db_name = st.text_input("Enter new database name (without .db extension):")
+    if new_db_name:
+        selected_db = f"{new_db_name}.db"
 
-# Filter options based on search
-if search_term:
-    filtered_options = [option for option in db_list 
-                      if search_term.lower() in option.lower()]
-else:
-    filtered_options = db_list
-# Show filtered dropdown
-if filtered_options:
-    selected_db = st.selectbox("Select Databases:", filtered_options)
-else:
-    st.warning("No matches found")
-    selected_db = st.selectbox("Select Databases:", db_list)
-
+        
 if selected_db:
     st.success(f"Using database: {selected_db}")
     
